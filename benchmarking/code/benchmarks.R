@@ -1,10 +1,10 @@
 library(caret)
 library(data.table)
 
-estimate_regressor_performance <- function(y_actual, y_predicted, dec = 3){
+estimate_regressor_performance <- function(y_actual, y_predicted){
   rmse      <- sqrt(sum((y_actual - y_predicted)^2) / length(y_actual))
   pearsonr  <- cor(y_actual, y_predicted, method = "pearson")
-  error_estimates <- c(r = pearsonr, rmse = rmse)
+  c(pearsonr, rmse)
 }
 
 get_ctrls <- function(){
@@ -57,8 +57,8 @@ build_xgb_regressor <- function(x, y, ctrl){
   xgb_fit
 }
 
-read_response <- function(subset){
-  basepath <- paste0("../input/y_", subset, "_")
+read_response <- function(year){
+  basepath <- paste0("../input/responses/y_", year, "_")
   y_train <- read.csv(
     file = paste0(basepath, "train.csv"), 
     header = FALSE, 
@@ -75,11 +75,23 @@ read_response <- function(subset){
   y_test_vect <- y_test[, 2]
   names(y_test_vect) <- y_test[, 1]
 
+  if (length(intersect(names(y_train_vect), names(y_test_vect))) != 0){
+    notification <- paste0("Shared samples between train and test in ",
+                           year, "!")
+    stop(notification)
+  }
+
   list(train = y_train_vect, test = y_test_vect)
 }
 
-read_input <- function(subset, dataset, y){
-  filepath <- paste0("../input/datasets/x_", dataset, "_", subset, ".csv")
+read_input <- function(year, dataset, y, dist = NULL){
+  filepath <- ""
+  if (is.null(dist)){
+    filepath <- paste0("../input/datasets/", dataset, "_", year, ".csv")
+  } else {
+    filepath <- paste0("../input/datasets/", dataset, "_", year, "_", dist, ".csv")
+  }
+  
   x <- read.csv(file = filepath, header = TRUE, row.names = 1)
   x_train <- x[names(y$train), ]
   x_test  <- x[names(y$test), ]
@@ -87,72 +99,123 @@ read_input <- function(subset, dataset, y){
   list(train = x_train, test = x_test)
 }
 
-bootstrap_testing <- function(xgb_model, x_test, y_test, nrounds = 1000){
-  set.seed(38854)
-  total_samples <- nrow(x_test)
-  results <- matrix(NA, nrow = nrounds, ncol = 2)
-  for (i in 1:nrounds){
-    bidx <- sample(1:total_samples, total_samples, replace = TRUE)
-    bx_test <- x_test[bidx, ]
-    by_test <- y_test[bidx]
-    y_predicted <- predict(xgb_model, bx_test)
-    results[i, ] <- estimate_regressor_performance(by_test, y_predicted)
+# -----------------------------------------------------------------------------
+ligand_experiments <- function(years, ctrls){
+  message("Ligand experiments")
+  for (year in years){
+    message(paste0("  ", year))
+    y <- read_response(year)
+    x <- read_input(year, "ligand", y)
+
+    for (ctrlname in names(ctrls)){
+      message(paste0("    ", ctrlname))
+      fname <- paste0("ligand_", year, "_", ctrlname)
+
+      ctrl  <- ctrls[[ctrlname]]
+      model <- build_xgb_regressor(x$train, y$train, ctrl)
+      saveRDS(model, paste0("../output/models/", fname, ".rds"))
+
+      y_predicted <- predict(model, x$test)
+      performance <- estimate_regressor_performance(y$test, y_predicted)
+
+      entry <- paste0(year, "\t", performance[1], "\t", performance[2])
+      perfpath <- paste0("../output/results/ligand_", ctrlname, ".txt")
+      write(entry, append = T, file = perfpath) 
+    }
   }
-  colnames(results) <- c("R", "RMSE")
-  results
+}
+
+# ECIF and PECIF independent experiments
+general_experiments <- function(dtype, years, ctrls, dists = c(4, 6, 8, 10)){
+  message(paste0("General experiments: ", dtype))
+
+  for (year in years){
+    message(paste0("  ", year))
+    y <- read_response(year)
+
+    for (dist in dists){
+      x <- read_input(year, dtype, y, dist)
+
+      for (ctrlname in names(ctrls)){
+        message(paste0("    ", dist, " ", ctrlname))
+        fname <- paste0(dtype, "_", year, "_", dist, "_", ctrlname)
+        
+        ctrl  <- ctrls[[ctrlname]]
+        model <- build_xgb_regressor(x$train, y$train, ctrl)
+        saveRDS(model, paste0("../output/models/", fname, ".rds"))
+
+        y_predicted <- predict(model, x$test)
+        performance <- estimate_regressor_performance(y$test, y_predicted)
+
+        entry <- paste0(year, "-", dist, "\t", performance[1], "\t", performance[2])
+        perfpath <- paste0("../output/results/", dtype, "_", ctrlname, ".txt")
+        write(entry, append = T, file = perfpath) 
+      }
+    }
+  }
+}
+
+# ECIF and PECIF + ligand features experiments
+merge_datasets <- function(a, b, year){
+  # Sanity check
+  if (length(intersect(rownames(a$train), rownames(b$train))) != nrow(a$train)){
+    notification <- paste0("Inconsistent samples in the merging of train sets ",
+                           "in ", year)
+    stop(notification)
+  }
+  if (length(intersect(rownames(a$test), rownames(b$test))) != nrow(a$test)){
+    notification <- paste0("Inconsistent samples in the merging of test sets ",
+                           "in ", year)
+    stop(notification)
+  }
+
+  x_train <- cbind(a$train, b$train[rownames(a$train), ])
+  x_test  <- cbind(a$test, b$test[rownames(a$test), ])
+
+  list(train = x_train, test = x_test)
+}
+
+merged_experiments <- function(dtype, years, ctrls, dists = c(4, 6, 8, 10)){
+  message(paste0("Merged experiments: ", dtype))
+
+  for (year in years){
+    message(paste0("  ", year))
+    y <- read_response(year)
+    ligand_x <- read_input(year, "ligand", y)
+
+    for (dist in dists){
+      dtype_x <- read_input(year, dtype, y, dist)
+      x <- merge_datasets(ligand_x, dtype_x, year)
+
+      for (ctrlname in names(ctrls)){
+        message("    ", ctrlname)
+        fname <- paste0("merged_ligand_", dtype, "_", year, "_", dist, "_", ctrlname)
+        
+        ctrl  <- ctrls[[ctrlname]]
+        model <- build_xgb_regressor(x$train, y$train, ctrl)
+        saveRDS(model, paste0("../output/models/", fname, ".rds"))
+
+        y_predicted <- predict(model, x$test)
+        performance <- estimate_regressor_performance(y$test, y_predicted)
+
+        entry <- paste0(year, "-", dist, "\t", performance[1], "\t", performance[2])
+        perfpath <- paste0("../output/results/merged_ligand_", dtype, "_", ctrlname, ".txt")
+        write(entry, append = T, file = perfpath) 
+      }
+    }
+  }
 }
 
 # -----------------------------------------------------------------------------
-
 main <- function(){
-  datasets <- c(
-    "ecif_with_hs",
-    "spatial_ecif_with_hs"
-  )
-  subsets <- c("casf-07", "casf-13", "casf-16")
-  subsets <- c("casf-16")
+  years <- c("casf-07", "casf-13", "casf-16", "casf-19")
   ctrls <- get_ctrls()
 
-  for (ctrl in names(ctrls)[1:1]){
-    for (subset in subsets){
-      results <- NULL
-      y <- read_response(subset)
-      for (dataset in datasets){
-        note <- paste0(ctrl, " ", subset, " ", dataset)
-        message(note)
-        x <- read_input(subset, dataset, y)
-
-        message("  building model")
-        xgb_model <- build_xgb_regressor(x$train, y$train, ctrls[[ctrl]])
-        saveRDS(
-          xgb_model, 
-          paste0("../output/models/", ctrl, "__", subset, "__", dataset, ".rds")
-        )
-
-        # Boostrap test performance.
-        message("  bootstrap testing") 
-        bootstrap_results <- bootstrap_testing(xgb_model, x$test, y$test, 50)
-        write.csv(
-          bootstrap_results, 
-          file = paste0("../output/bootstrap_performance/", 
-                        ctrl, "__", subset, "__", dataset, ".csv"),
-          row.names = FALSE
-        )  
-
-        # General single test set performance.
-        message("  general testing") 
-        y_predicted <- predict(xgb_model, x$test)
-        result <- estimate_regressor_performance(y$test, y_predicted)    
-        results <- rbind(results, result)
-      }
-      rownames(results) <- datasets
-      results <- round(results, 3)
-      write.csv(
-        results, 
-        file = paste0("../output/general_performance/", ctrl, "__", subset, ".csv")
-      )
-    }
-  }
+  ligand_experiments(years, ctrls)
+  general_experiments('ecif', years, ctrls)
+  general_experiments('pecif', years, ctrls)
+  merged_experiments('ecif', years, ctrls)
+  merged_experiments('pecif', years, ctrls)
 }
 
 main()

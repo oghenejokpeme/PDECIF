@@ -86,16 +86,20 @@ def process_protein(subset, molecule_id, pemap):
 
     return protein
 
-def get_molecule_feature(protein_properties, ligand_properties, distance):
+def get_molecule_feature(protein_properties, ligand_properties, distance):        
     protein_ecif, px, py, pz = protein_properties
     ligand_ecif, lx, ly, lz = ligand_properties
-
     edist = math.sqrt((px-lx)**2 + (py-ly)**2 + (pz-lz)**2)
 
+    dist = ''
     if edist <= distance:
-        return protein_ecif + '-' + ligand_ecif
+        dist = 'l'
+    elif edist > distance:
+        dist = 'h'
     else:
         return None
+
+    return protein_ecif + '-' + ligand_ecif + '-' + dist
 
 def get_molecule_features(protein, ligand, distance):
     molecule_features = {}
@@ -115,7 +119,7 @@ def get_molecule_features(protein, ligand, distance):
 
 def write_dataset(subset, molecule_ids, all_features, all_molecule_features, distance):
     all_features = sorted(all_features)
-    filepath = '../output/ecif_' + subset.lower() + '_' + str(distance) + '.csv'
+    filepath = '../output/pecif_' + subset.lower() + '_' + str(distance) + '.csv'
 
     header = ',' + ','.join(all_features)
     with open(filepath, 'w') as f:
@@ -134,13 +138,11 @@ def write_dataset(subset, molecule_ids, all_features, all_molecule_features, dis
 
 def generate_ecif_dataset(subset, pemap, distance):
     molecule_ids = read_molecule_ids(subset)
-    
+
     all_features = set()
     all_molecule_features = {}
     for molecule_id in molecule_ids:
         ligand = read_ligand(subset, molecule_id)
-        if not ligand:
-            print(f'{ligand} Empty!')
         ligand = process_ligand(ligand)
         protein = process_protein(subset, molecule_id, pemap)
         molecule_features = get_molecule_features(protein, ligand, distance)
@@ -153,8 +155,7 @@ def main():
     pemap = read_protein_ecif_map()
     distances = (4,6,8,10)
     subsets = ['CASF-07', 'CASF-13', 'CASF-16', 'CASF-19']
-    
-    subsets = ['CASF-19']
+
     for subset in subsets:
         print(subset)
         for distance in distances:
