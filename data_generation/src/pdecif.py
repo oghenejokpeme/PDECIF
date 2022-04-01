@@ -4,6 +4,35 @@ import math
 from rdkit import Chem
 from rdkit import RDLogger
 
+# Dictionaries extracted from https://github.com/DIFACQUIM/ECIF
+# Paper: https://doi.org/10.1093/bioinformatics/btaa982
+ECIF_ProteinAtoms = {'C;4;1;3;0;0', 'C;4;2;1;1;1', 'C;4;2;2;0;0', 'C;4;2;2;0;1',
+                     'C;4;3;0;0;0', 'C;4;3;0;1;1', 'C;4;3;1;0;0', 'C;4;3;1;0;1',
+                     'C;5;3;0;0;0', 'C;6;3;0;0;0', 'N;3;1;2;0;0', 'N;3;2;0;1;1',
+                     'N;3;2;1;0;0', 'N;3;2;1;1;1', 'N;3;3;0;0;1', 'N;4;1;2;0;0',
+                     'N;4;1;3;0;0', 'N;4;2;1;0;0', 'O;2;1;0;0;0', 'O;2;1;1;0;0',
+                     'S;2;1;1;0;0', 'S;2;2;0;0;0'}
+
+# Possible ligand atoms according to the PDBbind 2016 "refined set"
+ECIF_LigandAtoms = {'Br;1;1;0;0;0', 'C;3;3;0;1;1', 'C;4;1;1;0;0', 'C;4;1;2;0;0',
+                     'C;4;1;3;0;0', 'C;4;2;0;0;0', 'C;4;2;1;0;0', 'C;4;2;1;0;1',
+                     'C;4;2;1;1;1', 'C;4;2;2;0;0', 'C;4;2;2;0;1', 'C;4;3;0;0;0',
+                     'C;4;3;0;0;1', 'C;4;3;0;1;1', 'C;4;3;1;0;0', 'C;4;3;1;0;1',
+                     'C;4;4;0;0;0', 'C;4;4;0;0;1', 'C;5;3;0;0;0', 'C;5;3;0;1;1',
+                     'C;6;3;0;0;0', 'Cl;1;1;0;0;0', 'F;1;1;0;0;0', 'I;1;1;0;0;0',
+                     'N;3;1;0;0;0', 'N;3;1;1;0;0', 'N;3;1;2;0;0', 'N;3;2;0;0;0',
+                     'N;3;2;0;0;1', 'N;3;2;0;1;1', 'N;3;2;1;0;0', 'N;3;2;1;0;1',
+                     'N;3;2;1;1;1', 'N;3;3;0;0;0', 'N;3;3;0;0;1', 'N;3;3;0;1;1',
+                     'N;4;1;2;0;0', 'N;4;1;3;0;0', 'N;4;2;1;0;0', 'N;4;2;2;0;0',
+                     'N;4;2;2;0;1', 'N;4;3;0;0;0', 'N;4;3;0;0;1', 'N;4;3;1;0;0',
+                     'N;4;3;1;0;1', 'N;4;4;0;0;0', 'N;4;4;0;0;1', 'N;5;2;0;0;0',
+                     'N;5;3;0;0;0', 'N;5;3;0;1;1', 'O;2;1;0;0;0', 'O;2;1;1;0;0',
+                     'O;2;2;0;0;0', 'O;2;2;0;0;1', 'O;2;2;0;1;1', 'P;5;4;0;0;0',
+                     'P;6;4;0;0;0', 'P;6;4;0;0;1', 'P;7;4;0;0;0', 'S;2;1;0;0;0',
+                     'S;2;1;1;0;0', 'S;2;2;0;0;0', 'S;2;2;0;0;1', 'S;2;2;0;1;1',
+                     'S;3;3;0;0;0', 'S;3;3;0;0;1', 'S;4;3;0;0;0', 'S;6;4;0;0;0',
+                     'S;6;4;0;0;1', 'S;7;4;0;0;0'}
+
 # Disable RDKit warnings.
 RDLogger.DisableLog('rdApp.*')
 
@@ -33,6 +62,7 @@ def make_property(atom_details):
     return ';'.join([str(val) for val in atom_details])
 
 def process_ligand(mol):
+    mol = Chem.AddHs(mol)
     lproperties = {}
     for atom in mol.GetAtoms():
         if atom.GetSymbol() != 'H':
@@ -47,7 +77,9 @@ def process_ligand(mol):
             
             pos = mol.GetConformer().GetAtomPosition(atom.GetIdx())
             atom_ecif = make_property(details)
-            lproperties[atom.GetIdx()] = (atom_ecif, pos.x, pos.y, pos.z)
+
+            if atom_ecif in ECIF_LigandAtoms:
+                lproperties[atom.GetIdx()] = (atom_ecif, pos.x, pos.y, pos.z)
 
     return lproperties
 
@@ -89,6 +121,7 @@ def process_protein(subset, molecule_id, pemap):
 def get_molecule_feature(protein_properties, ligand_properties, distance):        
     protein_ecif, px, py, pz = protein_properties
     ligand_ecif, lx, ly, lz = ligand_properties
+
     edist = math.sqrt((px-lx)**2 + (py-ly)**2 + (pz-lz)**2)
 
     dist = ''
@@ -99,7 +132,7 @@ def get_molecule_feature(protein_properties, ligand_properties, distance):
     else:
         return None
 
-    return protein_ecif + '-' + ligand_ecif + '-' + dist
+    return f'{protein_ecif}-{ligand_ecif}-{dist}'
 
 def get_molecule_features(protein, ligand, distance):
     molecule_features = {}
@@ -120,7 +153,6 @@ def get_molecule_features(protein, ligand, distance):
 def write_dataset(subset, molecule_ids, all_features, all_molecule_features, distance):
     all_features = sorted(all_features)
     filepath = '../output/pecif_' + subset.lower() + '_' + str(distance) + '.csv'
-
     header = ',' + ','.join(all_features)
     with open(filepath, 'w') as f:
         f.write(header + '\n')
@@ -161,6 +193,7 @@ def main():
         for distance in distances:
             print(distance)
             generate_ecif_dataset(subset, pemap, distance)
+            print()
 
 if __name__ == '__main__':
     main()
