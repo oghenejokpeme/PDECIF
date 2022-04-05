@@ -100,31 +100,6 @@ read_input <- function(year, dataset, y, dist = NULL){
 }
 
 # -----------------------------------------------------------------------------
-ligand_experiments <- function(years, ctrls){
-  message("Ligand experiments")
-  for (year in years){
-    message(paste0("  ", year))
-    y <- read_response(year)
-    x <- read_input(year, "ligand", y)
-
-    for (ctrlname in names(ctrls)){
-      message(paste0("    ", ctrlname))
-      fname <- paste0("ligand_", year, "_", ctrlname)
-
-      ctrl  <- ctrls[[ctrlname]]
-      model <- build_xgb_regressor(x$train, y$train, ctrl)
-      saveRDS(model, paste0("../output/models/", fname, ".rds"))
-
-      y_predicted <- predict(model, x$test)
-      performance <- estimate_regressor_performance(y$test, y_predicted)
-
-      entry <- paste0(year, "\t", performance[1], "\t", performance[2])
-      perfpath <- paste0("../output/results/ligand_", ctrlname, ".txt")
-      write(entry, append = T, file = perfpath) 
-    }
-  }
-}
-
 # ECIF and PECIF independent experiments
 general_experiments <- function(dtype, years, ctrls, dists = c(4, 6, 8, 10)){
   message(paste0("General experiments: ", dtype))
@@ -211,7 +186,6 @@ main <- function(){
   years <- c("casf-07", "casf-13", "casf-16", "casf-19")
   ctrls <- get_ctrls()
 
-  ligand_experiments(years, ctrls)
   general_experiments('ecif', years, ctrls)
   general_experiments('pecif', years, ctrls)
   merged_experiments('ecif', years, ctrls)
